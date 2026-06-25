@@ -8,6 +8,24 @@ Galaxy S25 Ultra,Samsung
 WH-1000XM5 Headphones,Sony
 Instant Pot Duo,Instant Pot`;
 
+async function downloadImage(url, filename) {
+  try {
+    const res = await fetch(url);
+    const blob = await res.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = blobUrl;
+    a.download = filename || "image.jpg";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(blobUrl);
+  } catch {
+    // Fallback: open in new tab if CORS blocks direct download
+    window.open(url, "_blank");
+  }
+}
+
 async function fetchImagesFor(productName, brand) {
   const res = await fetch("/api/search-image", {
     method: "POST",
@@ -163,11 +181,21 @@ export default function Home() {
           <div style={styles.imageGrid}>
             {singleResults.length === 0 && <p style={styles.mutedText}>No images found.</p>}
             {singleResults.map((r, i) => (
-              <a key={i} href={r.link} target="_blank" rel="noreferrer" style={styles.imageCard}>
-                <img src={r.thumbnailUrl} alt={r.title} style={styles.imageThumb} loading="lazy" />
-                <span style={styles.imageCardTitle}>{r.title}</span>
-                <span style={styles.imageCardSource}>{r.source}</span>
-              </a>
+              <div key={i} style={styles.imageCard}>
+                <a href={r.link} target="_blank" rel="noreferrer" style={{ textDecoration: "none", color: "inherit" }}>
+                  <img src={r.thumbnailUrl} alt={r.title} style={styles.imageThumb} loading="lazy" />
+                  <span style={styles.imageCardTitle}>{r.title}</span>
+                  <span style={styles.imageCardSource}>{r.source}</span>
+                </a>
+                <button
+                  type="button"
+                  style={styles.btnDownload}
+                  title="Download image"
+                  onClick={() => downloadImage(r.thumbnailUrl, `${r.title || "image"}-${i + 1}.jpg`)}
+                >
+                  ⬇ Download
+                </button>
+              </div>
             ))}
           </div>
         )}
@@ -249,11 +277,26 @@ export default function Home() {
                       <td style={styles.td}>{row.brand || "—"}</td>
                       <td style={styles.td}>
                         {row.results?.[0]?.thumbnailUrl ? (
-                          <img
-                            src={row.results[0].thumbnailUrl}
-                            alt=""
-                            style={{ width: 40, height: 40, objectFit: "contain" }}
-                          />
+                          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                            <img
+                              src={row.results[0].thumbnailUrl}
+                              alt=""
+                              style={{ width: 40, height: 40, objectFit: "contain" }}
+                            />
+                            <button
+                              type="button"
+                              style={styles.btnDownloadSmall}
+                              title="Download image"
+                              onClick={() =>
+                                downloadImage(
+                                  row.results[0].thumbnailUrl,
+                                  `${row.productName || "image"}.jpg`
+                                )
+                              }
+                            >
+                              ⬇
+                            </button>
+                          </div>
                         ) : (
                           "—"
                         )}
@@ -383,6 +426,7 @@ const styles = {
     display: "flex",
     flexDirection: "column",
     gap: 4,
+    background: "#fff",
   },
   imageThumb: {
     width: "100%",
@@ -423,6 +467,29 @@ const styles = {
   },
   td: { padding: "8px 12px", borderBottom: "1px solid #f1f2f5", verticalAlign: "middle" },
   footer: { fontSize: 12, color: "#9aa0aa", textAlign: "center", marginTop: 8 },
+  btnDownload: {
+    marginTop: 4,
+    width: "100%",
+    background: "#f0f4ff",
+    color: "#2f5fd6",
+    border: "1px solid #c7d4f8",
+    borderRadius: 6,
+    padding: "5px 0",
+    fontSize: 11.5,
+    fontWeight: 600,
+    cursor: "pointer",
+    transition: "background 0.15s",
+  },
+  btnDownloadSmall: {
+    background: "#f0f4ff",
+    color: "#2f5fd6",
+    border: "1px solid #c7d4f8",
+    borderRadius: 4,
+    padding: "2px 7px",
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: "pointer",
+  },
 };
 
 const globalCss = `
