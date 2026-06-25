@@ -46,6 +46,7 @@ export default function Home() {
   const [singleLoading, setSingleLoading] = useState(false);
   const [singleError, setSingleError] = useState(null);
   const [singleResults, setSingleResults] = useState(null);
+  const [selectedSingle, setSelectedSingle] = useState([]);
 
   // Batch state
   const [batchRows, setBatchRows] = useState([]);
@@ -64,6 +65,7 @@ export default function Home() {
     try {
       const results = await fetchImagesFor(singleName.trim(), singleBrand.trim());
       setSingleResults(results);
+      setSelectedSingle([]);
     } catch (err) {
       setSingleError(err.message);
     } finally {
@@ -212,26 +214,72 @@ export default function Home() {
         {singleError && <p style={styles.errorText}>{singleError}</p>}
 
         {singleResults && (
-          <div style={styles.imageGrid}>
-            {singleResults.length === 0 && <p style={styles.mutedText}>No images found.</p>}
-            {singleResults.map((r, i) => (
-              <div key={i} style={styles.imageCard}>
-                <a href={r.link} target="_blank" rel="noreferrer" style={{ textDecoration: "none", color: "inherit" }}>
-                  <img src={r.thumbnailUrl} alt={r.title} style={styles.imageThumb} loading="lazy" />
+          <>
+            {singleResults.length > 0 && (
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 16, marginBottom: 4 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600, cursor: "pointer", color: "#1a1d23" }}>
+                  <input
+                    type="checkbox"
+                    checked={selectedSingle.length === singleResults.length}
+                    onChange={() =>
+                      setSelectedSingle(
+                        selectedSingle.length === singleResults.length
+                          ? []
+                          : singleResults.map((_, i) => i)
+                      )
+                    }
+                  />
+                  Select All
+                </label>
+                {selectedSingle.length > 0 && (
+                  <button
+                    type="button"
+                    style={styles.btnDownloadSelected}
+                    onClick={() => {
+                      selectedSingle.forEach((i, n) => {
+                        setTimeout(() => {
+                          downloadImage(singleResults[i].thumbnailUrl, `${singleResults[i].title || "image"}-${i + 1}.jpg`);
+                        }, n * 200);
+                      });
+                    }}
+                  >
+                    ⬇ Download selected ({selectedSingle.length})
+                  </button>
+                )}
+              </div>
+            )}
+            <div style={styles.imageGrid}>
+              {singleResults.length === 0 && <p style={styles.mutedText}>No images found.</p>}
+              {singleResults.map((r, i) => (
+                <div key={i} style={styles.imageCard}>
+                  <div style={{ position: "relative" }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedSingle.includes(i)}
+                      onChange={() =>
+                        setSelectedSingle((prev) =>
+                          prev.includes(i) ? prev.filter((x) => x !== i) : [...prev, i]
+                        )
+                      }
+                      style={styles.imageCheckbox}
+                    />
+                    <a href={r.link} target="_blank" rel="noreferrer">
+                      <img src={r.thumbnailUrl} alt={r.title} style={styles.imageThumb} loading="lazy" />
+                    </a>
+                  </div>
                   <span style={styles.imageCardTitle}>{r.title}</span>
                   <span style={styles.imageCardSource}>{r.source}</span>
-                </a>
-                <button
-                  type="button"
-                  style={styles.btnDownload}
-                  title="Download image"
-                  onClick={() => downloadImage(r.thumbnailUrl, `${r.title || "image"}-${i + 1}.jpg`)}
-                >
-                  ⬇ Download
-                </button>
-              </div>
-            ))}
-          </div>
+                  <button
+                    type="button"
+                    style={styles.btnDownload}
+                    onClick={() => downloadImage(r.thumbnailUrl, `${r.title || "image"}-${i + 1}.jpg`)}
+                  >
+                    ⬇ Download
+                  </button>
+                </div>
+              ))}
+            </div>
+          </>
         )}
       </section>
 
@@ -488,6 +536,16 @@ const styles = {
     flexDirection: "column",
     gap: 4,
     background: "#fff",
+  },
+  imageCheckbox: {
+    position: "absolute",
+    top: 6,
+    left: 6,
+    width: 16,
+    height: 16,
+    cursor: "pointer",
+    zIndex: 2,
+    accentColor: "#2f5fd6",
   },
   imageThumb: {
     width: "100%",
