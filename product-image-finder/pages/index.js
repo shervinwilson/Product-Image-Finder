@@ -51,6 +51,7 @@ export default function Home() {
   const [batchRows, setBatchRows] = useState([]);
   const [batchRunning, setBatchRunning] = useState(false);
   const [batchProgress, setBatchProgress] = useState(0);
+  const [selectedRows, setSelectedRows] = useState([]);
   const fileInputRef = useRef(null);
   const cancelRef = useRef(false);
 
@@ -82,6 +83,7 @@ export default function Home() {
           error: null,
         }))
       );
+      setSelectedRows([]);
     };
     reader.readAsText(file);
   }, []);
@@ -91,6 +93,7 @@ export default function Home() {
     setBatchRows(
       parsed.map((p) => ({ ...p, status: "pending", results: null, error: null }))
     );
+    setSelectedRows([]);
   }, []);
 
   const runBatch = useCallback(async () => {
@@ -139,6 +142,37 @@ export default function Home() {
     const csv = rowsToCsv(batchRows);
     downloadCsv(csv, "product-images-results.csv");
   }, [batchRows]);
+
+  const rowsWithImages = batchRows
+    .map((r, i) => ({ ...r, idx: i }))
+    .filter((r) => r.results?.[0]?.thumbnailUrl);
+
+  const allSelected =
+    rowsWithImages.length > 0 && rowsWithImages.every((r) => selectedRows.includes(r.idx));
+
+  const toggleSelectAll = () => {
+    if (allSelected) {
+      setSelectedRows([]);
+    } else {
+      setSelectedRows(rowsWithImages.map((r) => r.idx));
+    }
+  };
+
+  const toggleRow = (idx) => {
+    setSelectedRows((prev) =>
+      prev.includes(idx) ? prev.filter((i) => i !== idx) : [...prev, idx]
+    );
+  };
+
+  const downloadSelected = async () => {
+    const toDownload = batchRows
+      .map((r, i) => ({ ...r, idx: i }))
+      .filter((r) => selectedRows.includes(r.idx) && r.results?.[0]?.thumbnailUrl);
+    for (const row of toDownload) {
+      await downloadImage(row.results[0].thumbnailUrl, `${row.productName || "image"}.jpg`);
+      await new Promise((res) => setTimeout(res, 200));
+    }
+  };
 
   return (
     <div style={styles.page}>
@@ -252,6 +286,15 @@ export default function Home() {
               >
                 Export results to CSV
               </button>
+              {selectedRows.length > 0 && (
+                <button
+                  type="button"
+                  style={styles.btnDownloadSelected}
+                  onClick={downloadSelected}
+                >
+                  ⬇ Download selected ({selectedRows.length})
+                </button>
+              )}
               <span style={styles.mutedText}>{batchProgress}% complete</span>
             </div>
 
@@ -263,6 +306,15 @@ export default function Home() {
               <table style={styles.table}>
                 <thead>
                   <tr>
+                    <th style={{ ...styles.th, width: 36 }}>
+                      <input
+                        type="checkbox"
+                        checked={allSelected}
+                        onChange={toggleSelectAll}
+                        disabled={rowsWithImages.length === 0}
+                        title="Select all"
+                      />
+                    </th>
                     <th style={styles.th}>Product name</th>
                     <th style={styles.th}>Brand</th>
                     <th style={styles.th}>Image</th>
@@ -273,6 +325,15 @@ export default function Home() {
                 <tbody>
                   {batchRows.map((row, i) => (
                     <tr key={i}>
+                      <td style={{ ...styles.td, textAlign: "center" }}>
+                        {row.results?.[0]?.thumbnailUrl ? (
+                          <input
+                            type="checkbox"
+                            checked={selectedRows.includes(i)}
+                            onChange={() => toggleRow(i)}
+                          />
+                        ) : null}
+                      </td>
                       <td style={styles.td}>{row.productName}</td>
                       <td style={styles.td}>{row.brand || "—"}</td>
                       <td style={styles.td}>
@@ -467,6 +528,16 @@ const styles = {
   },
   td: { padding: "8px 12px", borderBottom: "1px solid #f1f2f5", verticalAlign: "middle" },
   footer: { fontSize: 12, color: "#9aa0aa", textAlign: "center", marginTop: 8 },
+  btnDownloadSelected: {
+    background: "#2f5fd6",
+    color: "#fff",
+    border: "none",
+    borderRadius: 8,
+    padding: "8px 16px",
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: "pointer",
+  },
   btnDownload: {
     marginTop: 4,
     width: "100%",
