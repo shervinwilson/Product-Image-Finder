@@ -139,105 +139,6 @@ async function fetchImagesFor(productName, brand) {
 
 const SESSION_KEY = "pif_session";
 
-// ── Duplicate Detection (perceptual hash via canvas) ──────────
-async function getImageHash(url) {
-  try {
-    const res = await fetch(url);
-    const blob = await res.blob();
-    const img = new Image();
-    const objUrl = URL.createObjectURL(blob);
-    await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = objUrl; });
-    const SIZE = 8;
-    const canvas = document.createElement("canvas");
-    canvas.width = SIZE; canvas.height = SIZE;
-    const ctx = canvas.getContext("2d");
-    ctx.drawImage(img, 0, 0, SIZE, SIZE);
-    URL.revokeObjectURL(objUrl);
-    const data = ctx.getImageData(0, 0, SIZE, SIZE).data;
-    // Convert to grayscale pixels
-    const pixels = [];
-    for (let i = 0; i < data.length; i += 4) {
-      pixels.push(0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]);
-    }
-    const avg = pixels.reduce((a, b) => a + b, 0) / pixels.length;
-    return pixels.map((p) => (p >= avg ? "1" : "0")).join("");
-  } catch { return null; }
-}
-
-function hammingDistance(a, b) {
-  if (!a || !b || a.length !== b.length) return 999;
-  let dist = 0;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) dist++;
-  return dist;
-}
-
-// Returns array of duplicate group indices: [{indices:[0,2,5], representative:0}]
-async function detectDuplicates(results, threshold = 8) {
-  const hashes = await Promise.all(results.map((r) => getImageHash(r.thumbnailUrl)));
-  const visited = new Set();
-  const groups = [];
-  for (let i = 0; i < hashes.length; i++) {
-    if (visited.has(i) || !hashes[i]) continue;
-    const group = [i];
-    for (let j = i + 1; j < hashes.length; j++) {
-      if (!visited.has(j) && hammingDistance(hashes[i], hashes[j]) <= threshold) {
-        group.push(j);
-        visited.add(j);
-      }
-    }
-    if (group.length > 1) {
-      visited.add(i);
-      groups.push({ indices: group, representative: i });
-    }
-  }
-  return groups;
-}
-
-// ── AI Best Image Picker ──────────────────────────────────────
-// Scores each result heuristically (no external API needed):
-// - Source quality (amazon, getty, shutterstock = high)
-// - Title relevance to product name
-// - Thumbnail URL suggests original size
-function scoreImage(result, productName) {
-  let score = 0;
-  const url = (result.thumbnailUrl || "").toLowerCase();
-  const source = (result.source || "").toLowerCase();
-  const title = (result.title || "").toLowerCase();
-  const name = (productName || "").toLowerCase();
-
-  // Source quality bonuses
-  const premiumSources = ["amazon", "walmart", "target", "bestbuy", "apple", "samsung", "sony", "getty", "shutterstock", "adobe"];
-  if (premiumSources.some((s) => source.includes(s))) score += 30;
-
-  // Title keyword overlap with product name
-  const nameWords = name.split(/\s+/).filter((w) => w.length > 2);
-  const matchedWords = nameWords.filter((w) => title.includes(w));
-  score += (matchedWords.length / Math.max(nameWords.length, 1)) * 40;
-
-  // Prefer URLs that suggest larger originals
-  if (url.includes("_AC_") || url.includes("_SL") || url.includes("large") || url.includes("1000") || url.includes("800")) score += 10;
-
-  // Penalise stock photo watermark hints
-  if (title.includes("stock") || title.includes("illustration") || title.includes("clipart")) score -= 20;
-
-  // Penalise if source is a forum/social
-  const weakSources = ["reddit", "twitter", "pinterest", "ebay", "etsy", "aliexpress"];
-  if (weakSources.some((s) => source.includes(s))) score -= 10;
-
-  return Math.max(0, score);
-}
-
-function pickBestImage(results, productName) {
-  if (!results || results.length === 0) return 0;
-  let bestIdx = 0;
-  let bestScore = -Infinity;
-  results.forEach((r, i) => {
-    const s = scoreImage(r, productName);
-    if (s > bestScore) { bestScore = s; bestIdx = i; }
-  });
-  return bestIdx;
-}
-
 // ── SVG Icons ─────────────────────────────────────────────────
 const IC = {
   Search:      (p) => <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>,
@@ -259,9 +160,6 @@ const IC = {
   Wand:        (p) => <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M15 4V2M15 16v-2M8 9h2M20 9h2M17.8 11.8L19 13M17.8 6.2L19 5M3 21l9-9M12.2 6.2L11 5"/></svg>,
   Resize:      (p) => <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>,
   Image:       (p) => <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>,
-  Sparkles:    (p) => <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>,
-  Layers:      (p) => <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>,
-  Trophy:      (p) => <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polyline points="8 21 12 21 16 21"/><line x1="12" y1="17" x2="12" y2="21"/><path d="M7 4H4a2 2 0 000 4c0 2.5 2 4 5 5"/><path d="M17 4h3a2 2 0 010 4c0 2.5-2 4-5 5"/><path d="M7 4h10v8a5 5 0 01-10 0V4z"/></svg>,
 };
 
 // ── Preloader ─────────────────────────────────────────────────
@@ -332,16 +230,6 @@ export default function Home() {
   const [pickedImage, setPickedImage] = useState({});
   const [zipLoading, setZipLoading] = useState(false);
 
-  // Duplicate detection
-  const [dupGroups, setDupGroups] = useState([]); // for single search
-  const [dupLoading, setDupLoading] = useState(false);
-  const [showDupOnly, setShowDupOnly] = useState(false);
-
-  // AI picker
-  const [aiPickLoading, setAiPickLoading] = useState(false);
-  const [aiPickedIdx, setAiPickedIdx] = useState(null); // for single search
-  const [batchAiPicks, setBatchAiPicks] = useState({}); // rowIdx -> resultIdx
-
   const fileInputRef = useRef(null);
   const cancelRef = useRef(false);
 
@@ -383,7 +271,6 @@ export default function Home() {
     e.preventDefault();
     if (!singleName.trim()) return;
     setSingleLoading(true); setSingleError(null); setSingleResults(null);
-    setDupGroups([]); setShowDupOnly(false); setAiPickedIdx(null);
     try {
       const results = await fetchImagesFor(singleName.trim(), singleBrand.trim());
       setSingleResults(results); setSelectedSingle([]);
@@ -443,41 +330,6 @@ export default function Home() {
     }
     setBatchRunning(false);
   }, [batchRows]);
-
-  // ── Duplicate detection (single search) ──
-  const runDuplicateDetection = async () => {
-    if (!singleResults?.length) return;
-    setDupLoading(true);
-    try {
-      const groups = await detectDuplicates(singleResults);
-      setDupGroups(groups);
-      if (groups.length === 0) showToast("No duplicates found");
-      else showToast(`Found ${groups.length} duplicate group${groups.length > 1 ? "s" : ""}`);
-    } finally { setDupLoading(false); }
-  };
-
-  // ── AI best image picker (single search) ──
-  const runAiPicker = () => {
-    if (!singleResults?.length) return;
-    setAiPickLoading(true);
-    setTimeout(() => {
-      const best = pickBestImage(singleResults, singleName);
-      setAiPickedIdx(best);
-      setAiPickLoading(false);
-      showToast(`AI picked result #${best + 1} — ${singleResults[best]?.source || "best match"}`);
-    }, 600); // slight delay for UX feel
-  };
-
-  // ── AI best image picker (bulk — all rows at once) ──
-  const runBatchAiPicker = () => {
-    const picks = {};
-    batchRows.forEach((row, i) => {
-      if (row.results?.length) picks[i] = pickBestImage(row.results, row.productName);
-    });
-    setBatchAiPicks(picks);
-    setPickedImage((prev) => ({ ...prev, ...picks }));
-    showToast(`AI auto-selected best image for ${Object.keys(picks).length} products`);
-  };
 
   const stopBatch = useCallback(() => { cancelRef.current = true; setBatchRunning(false); }, []);
   const exportCsv = useCallback(() => { downloadCsv(rowsToCsv(batchRows), "product-images.csv"); }, [batchRows]);
@@ -686,98 +538,52 @@ export default function Home() {
                         </button>
                       </div>
                     )}
-                    <div className="toolbar-actions" style={{ marginLeft: "auto" }}>
-                      <button className="btn-sm btn-ai" onClick={runAiPicker} disabled={aiPickLoading} title="AI picks the best matching image">
-                        {aiPickLoading ? <span className="spinner-dark" /> : <IC.Sparkles width="13" height="13" />}
-                        AI Pick Best
-                      </button>
-                      <button className={`btn-sm ${showDupOnly ? "btn-dup-active" : "btn-outline"}`}
-                        onClick={async () => { if (dupGroups.length === 0) await runDuplicateDetection(); else setShowDupOnly((v) => !v); }}
-                        disabled={dupLoading} title="Detect visually similar duplicate images">
-                        {dupLoading ? <span className="spinner-dark" /> : <IC.Layers width="13" height="13" />}
-                        {dupLoading ? "Scanning…" : dupGroups.length > 0 ? `${dupGroups.length} Dup${dupGroups.length > 1 ? "s" : ""}` : "Find Dupes"}
-                      </button>
-                      {dupGroups.length > 0 && (
-                        <button className="btn-sm btn-outline" onClick={() => setShowDupOnly((v) => !v)}>
-                          {showDupOnly ? "Show all" : "Dupes only"}
-                        </button>
-                      )}
-                    </div>
                     <span className="result-count">{singleResults.length} results</span>
                   </div>
                 )}
 
-                {dupGroups.length > 0 && (
-                  <div className="dup-legend">
-                    <IC.Layers width="12" height="12" />
-                    <span>{dupGroups.length} duplicate group{dupGroups.length > 1 ? "s" : ""} detected — colour-coded borders</span>
-                    <button className="dup-clear" onClick={() => { setDupGroups([]); setShowDupOnly(false); }}><IC.X width="10" height="10" /> Clear</button>
-                  </div>
-                )}
-
-                {aiPickedIdx !== null && (
-                  <div className="ai-banner">
-                    <IC.Trophy width="13" height="13" />
-                    <span>AI selected <strong>result #{aiPickedIdx + 1}</strong> ({singleResults[aiPickedIdx]?.source}) as the best match for "{singleName}"</span>
-                    <button className="dup-clear" onClick={() => setAiPickedIdx(null)}><IC.X width="10" height="10" /></button>
-                  </div>
-                )}
-
-                {(() => {
-                  const dupMap = {};
-                  dupGroups.forEach((g, gi) => g.indices.forEach((idx) => { dupMap[idx] = gi; }));
-                  const dupIndices = new Set(Object.keys(dupMap).map(Number));
-                  const displayResults = showDupOnly
-                    ? singleResults.map((r, i) => ({ r, i })).filter(({ i }) => dupIndices.has(i))
-                    : singleResults.map((r, i) => ({ r, i }));
-                  const groupColors = ["#d97706","#7c3aed","#059669","#dc2626","#0284c7","#65a30d"];
-
-                  return (
-                    <div className="image-grid">
-                      {displayResults.length === 0 && <div className="empty-state"><IC.Layers width="28" height="28" /><p>No duplicates found.</p></div>}
-                      {displayResults.map(({ r, i }) => {
-                        const isDup = dupIndices.has(i);
-                        const dupGroupIdx = dupMap[i];
-                        const groupColor = isDup ? groupColors[dupGroupIdx % groupColors.length] : null;
-                        const isAiBest = aiPickedIdx === i;
-                        return (
-                          <div key={i}
-                            className={`img-card ${selectedSingle.includes(i) ? "img-card-selected" : ""} ${isAiBest ? "img-card-ai-best" : ""}`}
-                            style={isDup ? { borderColor: groupColor, boxShadow: `0 0 0 1px ${groupColor}44` } : {}}>
-                            <div className="img-thumb-wrap">
-                              <input type="checkbox" className="img-check"
-                                checked={selectedSingle.includes(i)}
-                                onChange={() => setSelectedSingle((prev) => prev.includes(i) ? prev.filter((x) => x !== i) : [...prev, i])}
-                              />
-                              {isAiBest && <div className="ai-best-badge"><IC.Trophy width="9" height="9" /> AI Best</div>}
-                              {isDup && <div className="dup-badge" style={{ background: groupColor }}>G{dupGroupIdx + 1}</div>}
-                              <img src={r.thumbnailUrl} alt={r.title} className="img-thumb" loading="lazy"
-                                onClick={() => setPreview({ url: r.thumbnailUrl, title: r.title, link: r.link })} />
-                              <div className="img-hover-overlay" onClick={() => setPreview({ url: r.thumbnailUrl, title: r.title, link: r.link })}>
-                                <IC.ZoomIn width="14" height="14" /> Preview
-                              </div>
-                            </div>
-                            <div className="img-meta">
-                              <span className="img-title">{r.title}</span>
-                              <span className="img-source">{r.source}</span>
-                            </div>
-                            <div className="img-actions">
-                              <button className="img-btn" title={`Download as ${outputFormat.toUpperCase()}`} onClick={() => { const { w, h } = getOutputSize(); convertAndDownload(r.thumbnailUrl, buildFilename(filenamePattern, singleName, singleBrand, i, outputFormat), outputFormat, w, h); }}>
-                                <IC.Download width="13" height="13" />
-                              </button>
-                              <button className="img-btn" title="Copy URL" onClick={() => { navigator.clipboard.writeText(r.thumbnailUrl); showToast("URL copied"); }}>
-                                <IC.Copy width="13" height="13" />
-                              </button>
-                              <a href={r.link} target="_blank" rel="noreferrer" className="img-btn" title="Open source">
-                                <IC.Link width="13" height="13" />
-                              </a>
-                            </div>
-                          </div>
-                        );
-                      })}
+                <div className="image-grid">
+                  {singleResults.length === 0 && (
+                    <div className="empty-state">
+                      <IC.Search width="28" height="28" />
+                      <p>No images found for this product.</p>
                     </div>
-                  );
-                })()}
+                  )}
+                  {singleResults.map((r, i) => (
+                    <div key={i} className={`img-card ${selectedSingle.includes(i) ? "img-card-selected" : ""}`}>
+                      <div className="img-thumb-wrap">
+                        <input type="checkbox" className="img-check"
+                          checked={selectedSingle.includes(i)}
+                          onChange={() => setSelectedSingle((prev) => prev.includes(i) ? prev.filter((x) => x !== i) : [...prev, i])}
+                        />
+                        <img src={r.thumbnailUrl} alt={r.title} className="img-thumb" loading="lazy"
+                          onClick={() => setPreview({ url: r.thumbnailUrl, title: r.title, link: r.link })}
+                        />
+                        <div className="img-hover-overlay" onClick={() => setPreview({ url: r.thumbnailUrl, title: r.title, link: r.link })}>
+                          <IC.ZoomIn width="14" height="14" /> Preview
+                        </div>
+                      </div>
+                      <div className="img-meta">
+                        <span className="img-title">{r.title}</span>
+                        <span className="img-source">{r.source}</span>
+                      </div>
+                      <div className="img-actions">
+                        <button className="img-btn" title={`Download as ${outputFormat.toUpperCase()}`} onClick={() => {
+                          const { w, h } = getOutputSize();
+                          convertAndDownload(r.thumbnailUrl, buildFilename(filenamePattern, singleName, singleBrand, i, outputFormat), outputFormat, w, h);
+                        }}>
+                          <IC.Download width="13" height="13" />
+                        </button>
+                        <button className="img-btn" title="Copy URL" onClick={() => { navigator.clipboard.writeText(r.thumbnailUrl); showToast("URL copied"); }}>
+                          <IC.Copy width="13" height="13" />
+                        </button>
+                        <a href={r.link} target="_blank" rel="noreferrer" className="img-btn" title="Open source">
+                          <IC.Link width="13" height="13" />
+                        </a>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </>
             )}
           </div>
@@ -825,11 +631,6 @@ export default function Home() {
                   <button className="btn-ghost-md" onClick={exportCsv} disabled={batchRunning || !batchRows.some((r) => r.results)}>
                     <IC.File width="13" height="13" /> Export CSV
                   </button>
-                  {batchRows.some((r) => r.results?.length > 0) && !batchRunning && (
-                    <button className="btn-sm btn-ai" onClick={runBatchAiPicker} title="AI auto-selects best image for every product">
-                      <IC.Sparkles width="13" height="13" /> AI Pick All
-                    </button>
-                  )}
                   {selectedRows.length > 0 && (
                     <>
                       <button className="btn-sm" onClick={downloadSelected}>
@@ -1321,46 +1122,7 @@ body {
 }
 .watermark-link:hover { color:#a1a1aa; border-color:#71717a; }
 
-/* ── AI & Duplicate styles ── */
-.btn-ai {
-  background: linear-gradient(135deg, #1e1b4b, #312e81) !important;
-  color: #a5b4fc !important; border: 1px solid #3730a3 !important;
-}
-.btn-ai:hover:not(:disabled) { background: linear-gradient(135deg, #312e81, #3730a3) !important; color: #c7d2fe !important; }
-.btn-ai:disabled { opacity: .4; cursor: not-allowed; }
-.btn-dup-active { background: #451a03 !important; color: #fdba74 !important; border: 1px solid #7c2d12 !important; }
-.img-card-ai-best { border-color: #4338ca !important; box-shadow: 0 0 0 2px #3730a322 !important; }
-.ai-best-badge {
-  position: absolute; bottom: 6px; right: 6px; z-index: 3;
-  background: #1e1b4b; color: #a5b4fc; border: 1px solid #3730a3;
-  border-radius: 5px; padding: 2px 7px; font-size: 9.5px; font-weight: 700;
-  display: flex; align-items: center; gap: 4px; letter-spacing: .02em;
-}
-.dup-badge {
-  position: absolute; top: 6px; right: 6px; z-index: 3;
-  color: #fff; border-radius: 5px; padding: 2px 7px;
-  font-size: 9.5px; font-weight: 800; letter-spacing: .04em;
-}
-.dup-legend {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  margin: 8px 0; padding: 9px 14px; background: #1c0f00;
-  border: 1px solid #7c2d12; border-radius: 8px;
-  font-size: 12px; color: #fdba74;
-}
-.ai-banner {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  margin: 8px 0; padding: 9px 14px; background: #0f0f2a;
-  border: 1px solid #3730a3; border-radius: 8px;
-  font-size: 12px; color: #a5b4fc;
-}
-.ai-banner strong { color: #c7d2fe; }
-.dup-clear {
-  display: inline-flex; align-items: center; gap: 4px;
-  background: transparent; border: none; color: inherit; cursor: pointer;
-  font-size: 11px; font-weight: 600; opacity: .7; margin-left: auto; padding: 2px 4px;
-}
-.dup-clear:hover { opacity: 1; }
-.spinner-dark { width: 12px; height: 12px; border: 2px solid rgba(165,180,252,.2); border-top-color: #a5b4fc; border-radius: 50%; animation: spin .6s linear infinite; display: inline-block; }
+/* ── Misc ── */
 code {
   background:#27272a; padding:2px 7px; border-radius:5px;
   color:#a1a1aa; font-size:11.5px; border:1px solid #3f3f46;
