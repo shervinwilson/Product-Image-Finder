@@ -262,6 +262,7 @@ const IC = {
   Sparkles:    (p) => <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>,
   Layers:      (p) => <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>,
   Trophy:      (p) => <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polyline points="8 21 12 21 16 21"/><line x1="12" y1="17" x2="12" y2="21"/><path d="M7 4H4a2 2 0 000 4c0 2.5 2 4 5 5"/><path d="M17 4h3a2 2 0 010 4c0 2.5-2 4-5 5"/><path d="M7 4h10v8a5 5 0 01-10 0V4z"/></svg>,
+  Scissors:    (p) => <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>,
 };
 
 // ── Preloader ─────────────────────────────────────────────────
@@ -341,6 +342,35 @@ export default function Home() {
   const [aiPickLoading, setAiPickLoading] = useState(false);
   const [aiPickedIdx, setAiPickedIdx] = useState(null); // for single search
   const [batchAiPicks, setBatchAiPicks] = useState({}); // rowIdx -> resultIdx
+
+  // Background remover
+  const [bgRemoving, setBgRemoving] = useState({}); // key -> bool
+  const [bgRemoved, setBgRemoved] = useState({});   // key -> base64 data URL
+
+  const removeBg = async (imageUrl, key) => {
+    setBgRemoving((prev) => ({ ...prev, [key]: true }));
+    try {
+      const res = await fetch("/api/remove-bg", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageUrl }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Remove.bg failed");
+      setBgRemoved((prev) => ({ ...prev, [key]: data.imageBase64 }));
+      showToast("Background removed!");
+    } catch (err) {
+      showToast(`Error: ${err.message}`);
+    } finally {
+      setBgRemoving((prev) => ({ ...prev, [key]: false }));
+    }
+  };
+
+  const downloadBase64 = (dataUrl, filename) => {
+    const a = document.createElement("a");
+    a.href = dataUrl; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  };
 
   const fileInputRef = useRef(null);
   const cancelRef = useRef(false);
@@ -519,27 +549,49 @@ export default function Home() {
 
       {/* ── Preview Modal ── */}
       {preview && (
-        <div className="modal-overlay" onClick={() => setPreview(null)}>
+        <div className="modal-overlay" onClick={() => { setPreview(null); }}>
           <div className="modal-box" onClick={(e) => e.stopPropagation()}>
             <button className="modal-close" onClick={() => setPreview(null)}>
               <IC.X width="13" height="13" />
             </button>
-            <div className="modal-img-wrap">
-              <img src={preview.url} alt={preview.title} className="modal-img" />
+            {/* Toggle between original and bg-removed */}
+            <div className="modal-img-wrap" style={{ background: bgRemoved["modal"] ? "repeating-conic-gradient(#27272a 0% 25%, #1f1f23 0% 50%) 0 0 / 16px 16px" : undefined }}>
+              <img src={bgRemoved["modal"] || preview.url} alt={preview.title} className="modal-img" />
             </div>
+            {bgRemoved["modal"] && (
+              <div className="modal-bg-badge"><IC.Scissors width="10" height="10" /> Background removed</div>
+            )}
             <p className="modal-title">{preview.title}</p>
             <div className="modal-actions">
               <a href={preview.link} target="_blank" rel="noreferrer" className="modal-btn modal-btn-ghost">
                 <IC.Link width="13" height="13" /> Source
               </a>
               <button className="modal-btn modal-btn-primary" onClick={() => {
-                const { w, h } = getOutputSize();
-                convertAndDownload(preview.url, buildFilename(filenamePattern, preview.title, "", 0, outputFormat), outputFormat, w, h);
+                if (bgRemoved["modal"]) {
+                  downloadBase64(bgRemoved["modal"], buildFilename(filenamePattern, preview.title, "", 0, "png"));
+                } else {
+                  const { w, h } = getOutputSize();
+                  convertAndDownload(preview.url, buildFilename(filenamePattern, preview.title, "", 0, outputFormat), outputFormat, w, h);
+                }
               }}>
-                <IC.Download width="13" height="13" /> Download
+                <IC.Download width="13" height="13" /> {bgRemoved["modal"] ? "Download PNG" : "Download"}
               </button>
               <button className="modal-btn modal-btn-ghost" onClick={() => { navigator.clipboard.writeText(preview.url); showToast("URL copied"); }}>
                 <IC.Copy width="13" height="13" /> Copy URL
+              </button>
+              <button
+                className={`modal-btn ${bgRemoved["modal"] ? "modal-btn-bg-done" : "modal-btn-bg"}`}
+                disabled={bgRemoving["modal"]}
+                onClick={async () => {
+                  if (bgRemoved["modal"]) {
+                    setBgRemoved((prev) => { const n = { ...prev }; delete n["modal"]; return n; });
+                  } else {
+                    await removeBg(preview.url, "modal");
+                  }
+                }}
+              >
+                {bgRemoving["modal"] ? <span className="spinner-dark" /> : <IC.Scissors width="13" height="13" />}
+                {bgRemoving["modal"] ? "Removing…" : bgRemoved["modal"] ? "Show original" : "Remove BG"}
               </button>
             </div>
           </div>
@@ -761,6 +813,16 @@ export default function Home() {
                               <span className="img-title">{r.title}</span>
                               <span className="img-source">{r.source}</span>
                             </div>
+                            {/* Removed BG preview */}
+                            {bgRemoved[`single-${i}`] && (
+                              <div className="bg-removed-wrap">
+                                <div className="bg-removed-label"><IC.Scissors width="10" height="10" /> No background</div>
+                                <img src={bgRemoved[`single-${i}`]} alt="No BG" className="bg-removed-thumb" />
+                                <button className="bg-download-btn" onClick={() => downloadBase64(bgRemoved[`single-${i}`], buildFilename(filenamePattern, singleName, singleBrand, i, "png"))}>
+                                  <IC.Download width="11" height="11" /> Download PNG
+                                </button>
+                              </div>
+                            )}
                             <div className="img-actions">
                               <button className="img-btn" title={`Download as ${outputFormat.toUpperCase()}`} onClick={() => { const { w, h } = getOutputSize(); convertAndDownload(r.thumbnailUrl, buildFilename(filenamePattern, singleName, singleBrand, i, outputFormat), outputFormat, w, h); }}>
                                 <IC.Download width="13" height="13" />
@@ -771,6 +833,14 @@ export default function Home() {
                               <a href={r.link} target="_blank" rel="noreferrer" className="img-btn" title="Open source">
                                 <IC.Link width="13" height="13" />
                               </a>
+                              <button
+                                className={`img-btn img-btn-bg ${bgRemoved[`single-${i}`] ? "img-btn-bg-done" : ""}`}
+                                title="Remove background (Remove.bg)"
+                                disabled={bgRemoving[`single-${i}`]}
+                                onClick={() => removeBg(r.thumbnailUrl, `single-${i}`)}
+                              >
+                                {bgRemoving[`single-${i}`] ? <span className="spinner-xs" /> : <IC.Scissors width="13" height="13" />}
+                              </button>
                             </div>
                           </div>
                         );
@@ -911,6 +981,19 @@ export default function Home() {
                                   <button className="img-btn" title="Copy URL" onClick={() => { navigator.clipboard.writeText(activeResult.thumbnailUrl); showToast("URL copied"); }}>
                                     <IC.Copy width="13" height="13" />
                                   </button>
+                                  <button
+                                    className={`img-btn img-btn-bg ${bgRemoved[`batch-${i}`] ? "img-btn-bg-done" : ""}`}
+                                    title="Remove background"
+                                    disabled={bgRemoving[`batch-${i}`]}
+                                    onClick={() => removeBg(activeResult.thumbnailUrl, `batch-${i}`)}
+                                  >
+                                    {bgRemoving[`batch-${i}`] ? <span className="spinner-xs" /> : <IC.Scissors width="13" height="13" />}
+                                  </button>
+                                  {bgRemoved[`batch-${i}`] && (
+                                    <button className="img-btn" title="Download no-BG PNG" onClick={() => downloadBase64(bgRemoved[`batch-${i}`], buildFilename(filenamePattern, row.productName, row.brand, i, "png"))}>
+                                      <IC.Download width="13" height="13" />
+                                    </button>
+                                  )}
                                 </div>
                               )}
                             </td>
@@ -1320,6 +1403,42 @@ body {
   border-bottom:1px solid #3f3f46; padding-bottom:1px; transition:color .15s;
 }
 .watermark-link:hover { color:#a1a1aa; border-color:#71717a; }
+
+/* ── Background Remover ── */
+.img-btn-bg { color: #86efac !important; border-color: #14532d !important; background: #052e16 !important; }
+.img-btn-bg:hover { background: #14532d !important; color: #bbf7d0 !important; }
+.img-btn-bg-done { color: #6ee7b7 !important; border-color: #065f46 !important; background: #022c22 !important; }
+.bg-removed-wrap {
+  margin: 0 7px 4px; border-radius: 7px; border: 1px solid #14532d;
+  background: repeating-conic-gradient(#1f1f23 0% 25%, #18181b 0% 50%) 0 0 / 12px 12px;
+  overflow: hidden;
+}
+.bg-removed-label {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 9.5px; font-weight: 700; color: #6ee7b7;
+  padding: 5px 8px; background: #052e16; border-bottom: 1px solid #14532d; letter-spacing: .04em;
+}
+.bg-removed-thumb { width: 100%; height: 90px; object-fit: contain; display: block; }
+.bg-download-btn {
+  width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px;
+  background: #14532d; color: #86efac; border: none; padding: 6px;
+  font-size: 11px; font-weight: 700; cursor: pointer; font-family: inherit;
+  transition: background .15s;
+}
+.bg-download-btn:hover { background: #166534; }
+.modal-btn-bg {
+  background: #052e16; color: #86efac; border: 1px solid #14532d;
+}
+.modal-btn-bg:hover { background: #14532d; }
+.modal-btn-bg-done {
+  background: #022c22; color: #6ee7b7; border: 1px solid #065f46;
+}
+.modal-btn-bg-done:hover { background: #14532d; }
+.modal-bg-badge {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  font-size: 10.5px; font-weight: 700; color: #6ee7b7;
+  margin: -8px 0 8px; letter-spacing: .04em;
+}
 
 /* ── AI & Duplicate styles ── */
 .btn-ai {
